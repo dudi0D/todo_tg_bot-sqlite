@@ -38,7 +38,7 @@ def chars2time(text : str):
 def time2chars(time_in_int: int):
     hours = time_in_int // 60
     minutes = time_in_int % 60
-    return f'{hours}:{minutes}'
+    return f'{hours:02d}:{minutes:02d}'
 
 
 def free_minutes(message):
@@ -47,7 +47,8 @@ def free_minutes(message):
     daily_task_id INTEGER PRIMARY KEY,
     tg_id                 REFERENCES users (tg_id),
     start_time    TEXT,
-    end_time      TEXT);''')
+    end_time      TEXT,
+    event_name TEXT);''')
     cursor.execute(f'SELECT * FROM {message.text} WHERE tg_id = \'{message.from_user.username}\'')
     output = cursor.fetchall()
     minutes_of_day = [0 for _ in range(1440)]
@@ -84,6 +85,8 @@ class BotCommands:
         self.weekly_calendar_id = 0
         self.current_new_event_day = ''
         self.last_event_name = ''
+        self.tables = []
+        self.sent_message_id = 0
         cursor.execute('SELECT MAX(id) FROM users')
         t = cursor.fetchall()[0][0]
         if t:
@@ -92,6 +95,15 @@ class BotCommands:
             self.week_calendar_id_count = 1
         self.user_id_count = self.week_calendar_id_count
         self.days_of_week = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+
+    def _refresh_existing_tables(self):
+        cursor.execute('SELECT name FROM sqlite_schema WHERE name NOT LIKE "sqlite_%"')
+        output = cursor.fetchall()
+        existing_tables_of_week_days = []
+        for i in output:
+            if i[0] in self.days_of_week:
+                existing_tables_of_week_days.append(i[0])
+        self.tables = existing_tables_of_week_days
 
     def start(self, message):
         chat_id = message.chat.id
@@ -118,14 +130,15 @@ class BotCommands:
                 if message.from_user.username in i:
                     users_name = i[1]
                     break
-            self.bot.send_message(chat_id, f'Welcome back, {users_name}! What would you like to do?', reply_markup=start_options)
+            sent_message = self.bot.send_message(chat_id, f'Welcome back, {users_name}! What would you like to do?', reply_markup=start_options)
+            self.sent_message_id = sent_message.message_id
 
     def add_user(self, message):
         chat_id = message.chat.id
         name = message.text
         cursor.execute(
             "INSERT INTO users (id, name, admin, week_calendar_id, tg_id) VALUES (?, ?, ?, ?, ?)",
-            (self.user_id_count, name, 1, self.week_calendar_id_count, message.from_user.username)
+            (self.user_id_count, name, 0, self.week_calendar_id_count, message.from_user.username)
         )
         cursor.execute(
             "INSERT INTO calendar (week_calendar_id, monday, tuesday, wednesday, thursday, friday, saturday, sunday) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -139,7 +152,7 @@ class BotCommands:
 
     def edit_user_start(self, message):
         cursor.execute(f'SELECT name FROM users WHERE tg_id = \'{message.from_user.username}\'')
-        self.bot.send_message(message.chat.id, f'Enter new user\'s name. Current is - {cursor.fetchall()[0][0]}')
+        self.bot.send_message(message.chat.id,f'Enter new user\'s name. Current is - {cursor.fetchall()[0][0]}')
         self.user_states['edit_name'] = 1
 
     def edit_user_continue(self, message):
@@ -158,8 +171,14 @@ class BotCommands:
         self.bot.send_message(message.chat.id, "Choose a day", reply_markup=day_options)
 
     def edit_event(self, message): # To do
-        for i in self.days_of_week:
-            cursor.execute(f'SELECT * FROM {i} WHERE tg_id = {message.from_user.username}')
+        self._refresh_existing_tables()
+        events_of_user = []
+        for i in self.tables:
+            cursor.execute(f'SELECT * FROM {i} WHERE tg_id = ?', (message.from_user.username, ))
+            output = cursor.fetchall()
+            for j in output:
+                events_of_user.append(j+tuple([i]))
+        print(events_of_user)
 
     def database_users(self, message):
         chat_id = message.chat.id
@@ -214,10 +233,11 @@ class BotCommands:
                 cursor.execute('SELECT * FROM weekly_calendar_id')
             self.weekly_calendar_id = list(output)[0][0]
             self.weekly_calendar_id += 1
-            cursor.execute(f'INSERT INTO {self.current_new_event_day} (daily_task_id, tg_id, start_time, end_time) '
-                           f'VALUES (?, ?, ?, ?)', (self.weekly_calendar_id, message.from_user.username,
+            cursor.execute(f'INSERT INTO {self.current_new_event_day} (daily_task_id, tg_id, start_time, end_time, event_name) '
+                           f'VALUES (?, ?, ?, ?, ?)', (self.weekly_calendar_id, message.from_user.username,
                                                     time2chars(self.last_event_start_time),
-                                                    time2chars(self.last_event_end_time)))
+                                                    time2chars(self.last_event_end_time),
+                                                    self.last_event_name))
             cursor.execute(f'UPDATE weekly_calendar_id SET max_id = {self.weekly_calendar_id}')
             cursor.connection.commit()
             self.bot.send_message(message.chat.id, 'Event was successfully added')
