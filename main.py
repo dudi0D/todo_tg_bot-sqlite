@@ -87,6 +87,7 @@ class BotCommands:
         self.last_event_name = ''
         self.tables = []
         self.sent_message_id = 0
+        self.recieved_message_id = 0
         cursor.execute('SELECT MAX(id) FROM users')
         t = cursor.fetchall()[0][0]
         if t:
@@ -132,6 +133,7 @@ class BotCommands:
                     break
             sent_message = self.bot.send_message(chat_id, f'Welcome back, {users_name}! What would you like to do?', reply_markup=start_options)
             self.sent_message_id = sent_message.message_id
+            self.recieved_message_id = message.message_id
 
     def add_user(self, message):
         chat_id = message.chat.id
@@ -152,7 +154,10 @@ class BotCommands:
 
     def edit_user_start(self, message):
         cursor.execute(f'SELECT name FROM users WHERE tg_id = \'{message.from_user.username}\'')
-        self.bot.send_message(message.chat.id,f'Enter new user\'s name. Current is - {cursor.fetchall()[0][0]}')
+        self.bot.delete_message(chat_id=message.chat.id, message_id=self.sent_message_id)
+        self.bot.delete_message(chat_id=message.chat.id, message_id=self.recieved_message_id)
+        self.bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        self.bot.send_message(message.chat.id, f'Enter new user\'s name. Current is - {cursor.fetchall()[0][0]}')
         self.user_states['edit_name'] = 1
 
     def edit_user_continue(self, message):
